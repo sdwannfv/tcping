@@ -8,9 +8,15 @@ import (
 
 // TCPing ...
 type TCPing struct {
-	target *Target
-	done   chan struct{}
-	result *Result
+	target       *Target
+	done         chan struct{}
+	result       *Result
+	packetResult chan packetResult
+}
+type packetResult struct {
+	delay time.Duration
+	addr  net.Addr
+	err   error
 }
 
 var _ Pinger = (*TCPing)(nil)
@@ -18,7 +24,8 @@ var _ Pinger = (*TCPing)(nil)
 // NewTCPing return a new TCPing
 func NewTCPing() *TCPing {
 	tcping := TCPing{
-		done: make(chan struct{}),
+		done:         make(chan struct{}),
+		packetResult: make(chan packetResult),
 	}
 	return &tcping
 }
@@ -48,10 +55,15 @@ func (tcping TCPing) Start() <-chan struct{} {
 					tcping.Stop()
 					return
 				}
-				duration, remoteAddr, err := tcping.ping()
+				go tcping.ping()
 				tcping.result.Counter++
 
-				if err != nil {
+			case packetResult := <-tcping.packetResult:
+				tcping.result.Counter++
+				err := packetResult.err
+				remoteAddr := packetResult.addr
+				duration := packetResult.delay
+				if packetResult.err != nil {
 					fmt.Printf("Ping %s - failed: %s\n", tcping.target, err)
 				} else {
 					fmt.Printf("Ping %s(%s) - Connected - time=%s\n", tcping.target, remoteAddr, duration)
@@ -83,7 +95,7 @@ func (tcping *TCPing) Stop() {
 	tcping.done <- struct{}{}
 }
 
-func (tcping TCPing) ping() (time.Duration, net.Addr, error) {
+func (tcping TCPing) ping() {
 	var remoteAddr net.Addr
 	duration, errIfce := timeIt(func() interface{} {
 		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", tcping.target.Host, tcping.target.Port), tcping.target.Timeout)
@@ -99,7 +111,9 @@ func (tcping TCPing) ping() (time.Duration, net.Addr, error) {
 	})
 	if errIfce != nil {
 		err := errIfce.(error)
-		return 0, remoteAddr, err
+		tcping.packetResult <- packetResult{0, remoteAddr, err}
+		return
 	}
-	return time.Duration(duration), remoteAddr, nil
+
+	tcping.packetResult <- packetResult{time.Duration(duration), remoteAddr, nil}
 }

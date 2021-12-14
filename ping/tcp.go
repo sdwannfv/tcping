@@ -91,6 +91,9 @@ func (tcping TCPing) ping() (time.Duration, net.Addr, error) {
 			return err
 		}
 		remoteAddr = conn.RemoteAddr()
+		if tc, ok := conn.(*net.TCPConn); ok {
+			tc.SetLinger(0)
+		}
 		conn.Close()
 		return nil
 	})
